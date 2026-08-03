@@ -1,0 +1,4 @@
+.env
+__pychache__/
+messages_export/*.json
+osint_session.session
