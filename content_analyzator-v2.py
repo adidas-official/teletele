@@ -336,22 +336,67 @@ def build_llm_payload(records: list[MessageRecord], summary: dict[str, Any], sam
         "source_summaries": summary.get("source_summaries", []),
         "instructions": [
             """
-                Analyze the provided Telegram dataset and return ONLY valid JSON with keys: "topics", "summary", "traction_insights", "active_member_patterns", "repeated_content_observations".
+                Analyze the provided Telegram dataset and return ONLY valid JSON with keys: 
+                "topics", "summary", "channel_summaries", "traction_insights", "active_member_patterns", "repeated_content_observations".
 
                 Language of JSON values: Czech.
 
                 Tasks:
-                1. topics: List and concisely describe the main topics and narratives.
+                1. topics: List and concisely describe the main topics and narratives across all channels.
                 2. summary: Provide a high-level summary of the overall activity.
-                3. traction_insights: Analyze engagement patterns around the provided high-traction posts.
-                4. active_member_patterns: Summarize communication behavior of the most active participants.
-                5. repeated_content_observations: Identify recurring themes or shared content patterns.
+                3. channel_summaries: A JSON object mapping each source_name to a concise Czech description (2-4 sentences) summarizing the channel's specific focus, main discussed topics, and general orientation or stance of participants.
+                4. traction_insights: Analyze engagement patterns around the provided high-traction posts.
+                5. active_member_patterns: Summarize communication behavior of the most active participants.
+                6. repeated_content_observations: Identify recurring themes or shared content patterns.
 
                 Requirements:
                 - Output format: Strictly valid JSON.
                 - Keep descriptions concise, factual, and direct without filler words."""
         ],
     }
+
+def build_llm_only_report(input_path: Path, llm_result: Any, model_name: str) -> str:
+    generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines: list[str] = []
+
+    lines.append("# Telegram LLM analysis summary")
+    lines.append("")
+    lines.append(f"- **Input**: {input_path}")
+    lines.append(f"- **Generated**: {generated_at}")
+    lines.append(f"- **LLM model**: {model_name}")
+    lines.append("")
+
+    lines.append("## Main themes")
+    lines.append("")
+    llm_topics = llm_result.get("topics") if isinstance(llm_result, dict) else None
+    if llm_topics:
+        if isinstance(llm_topics, list):
+            lines.extend([f"- {topic}" for topic in llm_topics])
+        else:
+            lines.append(str(llm_topics))
+    else:
+        lines.append("_No topics generated._")
+    lines.append("")
+
+    lines.append("## Executive summary")
+    lines.append("")
+    llm_summary = llm_result.get("summary") if isinstance(llm_result, dict) else None
+    if llm_summary:
+        lines.append(str(llm_summary))
+    else:
+        lines.append("_No summary text generated._")
+    lines.append("")
+
+    lines.append("## Deeper LLM analysis")
+    lines.append("")
+    lines.append(format_llm_section("Traction insights", llm_result.get("traction_insights") if isinstance(llm_result, dict) else None))
+    lines.append("")
+    lines.append(format_llm_section("Active member patterns", llm_result.get("active_member_patterns") if isinstance(llm_result, dict) else None))
+    lines.append("")
+    lines.append(format_llm_section("Repeated content observations", llm_result.get("repeated_content_observations") if isinstance(llm_result, dict) else None))
+    lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
 
 
 def call_ollama_llm(model: str, payload: dict[str, Any]) -> str:
@@ -425,29 +470,127 @@ def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
     body_rows = ["| " + " | ".join(escape_cell(cell) for cell in row) + " |" for row in rows]
     return "\n".join([header_row, separator_row, *body_rows])
 
+def format_topics(topics: Any) -> list[str]:
+    lines = []
+    if not topics:
+        return ["_The LLM did not return a structured topic list._"]
 
-def format_llm_section(title: str, value: Any) -> str:
-    if value is None:
-        return f"### {title}\n\n_Nenalezeno._"
+    if isinstance(topics, str):
+        return [topics]
 
-    if isinstance(value, list):
-        if not value:
-            return f"### {title}\n\n_Nenalezeno._"
-        return "\n".join([f"### {title}"] + [f"- {item}" for item in value])
+    if isinstance(topics, dict):
+        topics = [topics]
 
-    if isinstance(value, dict):
-        if not value:
-            return f"### {title}\n\n_Nenalezeno._"
-        lines = [f"### {title}"]
-        for key, item in value.items():
-            if isinstance(item, list):
-                lines.append(f"- **{key}**")
-                lines.extend(f"  - {subitem}" for subitem in item)
+    if isinstance(topics, list):
+        for item in topics:
+            if isinstance(item, str):
+                lines.append(f"- {item}")
+            elif isinstance(item, dict):
+                desc = item.get("description") or item.get("topic") or item.get("title") or item.get("summary")
+                examples = item.get("examples")
+                
+                if desc:
+                    lines.append(f"- **{desc}**")
+                else:
+                    lines.append(f"- {item}")
+
+                if examples and isinstance(examples, list):
+                    for ex in examples:
+                        lines.append(f"  - {ex}")
             else:
-                lines.append(f"- **{key}**: {item}")
+                lines.append(f"- {item}")
+
+    return lines
+
+
+def format_summary(summary: Any) -> str:
+    if not summary:
+        return "_No summary text returned from the LLM._"
+
+    if isinstance(summary, str):
+        return summary
+
+    if isinstance(summary, dict):
+        desc = summary.get("description") or summary.get("summary") or summary.get("text")
+        if desc:
+            return str(desc)
+        
+        # Pokud slovník obsahuje více samostatných polí
+        parts = []
+        for key, val in summary.items():
+            clean_key = key.replace("_", " ").capitalize()
+            parts.append(f"**{clean_key}:** {val}")
+        return "\n\n".join(parts)
+
+    if isinstance(summary, list):
+        return "\n".join(f"- {item}" for item in summary)
+
+    return str(summary)
+
+
+def format_llm_section(title: str, content: Any) -> str:
+    lines = [f"### {title}", ""]
+
+    if not content:
+        lines.append("_Žádná data k zobrazení._")
         return "\n".join(lines)
 
-    return f"### {title}\n\n{value}"
+    def render_item(item: Any, depth: int = 0) -> list[str]:
+        indent = "  " * depth
+        res = []
+
+        if isinstance(item, str):
+            res.append(f"{indent}- {item}")
+
+        elif isinstance(item, list):
+            for elem in item:
+                res.extend(render_item(elem, depth))
+
+        elif isinstance(item, dict):
+            # Extrakce známých klíčů pro lidsky čitelný výstup
+            desc = item.get("description") or item.get("summary") or item.get("text")
+            url = item.get("url") or item.get("link")
+            metrics = item.get("engagement_metrics") or item.get("metrics")
+            examples = item.get("examples")
+
+            # Pokud objekt obsahuje popis nebo URL, zformátujeme jej jako přehledný odrážkový bod
+            if desc or url:
+                if desc and url:
+                    res.append(f"{indent}- [{desc}]({url})")
+                elif desc:
+                    res.append(f"{indent}- {desc}")
+                elif url:
+                    res.append(f"{indent}- <{url}>")
+
+                if metrics and isinstance(metrics, dict):
+                    m_str = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in metrics.items())
+                    res.append(f"{indent}  - *Metriky:* {m_str}")
+
+                if examples and isinstance(examples, list):
+                    res.append(f"{indent}  - *Příklady:*")
+                    for ex in examples:
+                        if isinstance(ex, str) and ex.startswith("http"):
+                            res.append(f"{indent}    - <{ex}>")
+                        else:
+                            res.append(f"{indent}    - {ex}")
+
+            else:
+                # Pokud jde o obalující klíče (např. "high_traction_posts" nebo "patterns")
+                for key, val in item.items():
+                    clean_key = key.replace("_", " ").capitalize()
+                    if isinstance(val, (list, dict)):
+                        res.append(f"{indent}- **{clean_key}:**")
+                        res.extend(render_item(val, depth + 1))
+                    else:
+                        res.append(f"{indent}- **{clean_key}:** {val}")
+
+        else:
+            res.append(f"{indent}- {item}")
+
+        return res
+
+    lines.extend(render_item(content))
+    return "\n".join(lines)
 
 
 def build_markdown_report(input_path: Path, summary: dict[str, Any], llm_result: Any, llm_provider: str, model_name: str) -> str:
@@ -488,21 +631,19 @@ def build_markdown_report(input_path: Path, summary: dict[str, Any], llm_result:
 
     lines.append("## Main themes and relations")
     lines.append("")
+    
+    # 1. Zpracování témat (topics)
     llm_topics = llm_result.get("topics") if isinstance(llm_result, dict) else None
-    if llm_topics:
-        if isinstance(llm_topics, list):
-            lines.extend([f"- {topic}" for topic in llm_topics])
-        else:
-            lines.append(str(llm_topics))
-    else:
-        lines.append("_The LLM did not return a structured topic list._")
+    lines.extend(format_topics(llm_topics))
     lines.append("")
 
+    # 2. Zpracování celkového shrnutí (summary)
     llm_summary = llm_result.get("summary") if isinstance(llm_result, dict) else None
+    lines.append(format_summary(llm_summary))
+    lines.append("")
+
     if llm_summary:
         lines.append(str(llm_summary))
-    elif isinstance(llm_result, dict) and llm_result.get("raw"):
-        lines.append(str(llm_result["raw"]))
     elif isinstance(llm_result, dict) and llm_result.get("raw"):
         lines.append(str(llm_result["raw"]))
     else:
@@ -528,32 +669,52 @@ def build_markdown_report(input_path: Path, summary: dict[str, Any], llm_result:
             lines.append(f"- {item.get('link', '')} ({', '.join(item.get('source_names', []))})")
     lines.append("")
 
-    lines.append("## Most popular posts")
+    # --- TABULKY NEJPOPULÁRNĚJŠÍCH PŘÍSPĚVKŮ ROZDĚLENÉ PODLE KANÁLU ---
+    lines.append("## Most popular posts by channel")
     lines.append("")
-    top_posts = summary.get("top_posts", [])
-    if top_posts:
-        table_rows: list[list[str]] = []
-        for post in top_posts[:10]:
-            excerpt = textwrap.shorten(str(post.get("text") or "[no text]"), width=180, placeholder="...")
-            post_url = telegram_post_url(post.get("source_name", ""), post.get("id"))
-            link_cell = f"[open]({post_url})" if post_url else ""
-            table_rows.append([
-                str(post.get("id", "")),
-                str(post.get("sender_id", "")),
-                str(post.get("views", 0)),
-                str(post.get("forwards", 0)),
-                str(post.get("reactions", 0)),
-                str(post.get("traction_score", 0)),
-                excerpt,
-                link_cell,
-            ])
-        lines.append(markdown_table(["ID", "Sender", "Views", "Forwards", "Reactions", "Traction", "Excerpt", "Telegram"], table_rows))
+    source_summaries = summary.get("source_summaries", [])
+    all_top_posts = summary.get("top_posts", [])
+
+    if source_summaries:
+        for source in source_summaries:
+            source_name = source.get("source_name", "unknown")
+            channel_url = telegram_channel_url(source_name)
+            display_name = f"[{source_name}]({channel_url})" if channel_url else source_name
+            lines.append(f"### {display_name}")
+            lines.append("")
+
+            # Výběr nejlepších příspěvků pro konkrétní kanál
+            posts = source.get("top_posts") or [p for p in all_top_posts if p.get("source_name") == source_name]
+
+            if posts:
+                table_rows: list[list[str]] = []
+                for post in posts[:5]:
+                    excerpt = textwrap.shorten(str(post.get("text") or "[no text]"), width=180, placeholder="...")
+                    post_url = telegram_post_url(source_name, post.get("id"))
+                    link_cell = f"[open]({post_url})" if post_url else ""
+                    table_rows.append([
+                        str(post.get("id", "")),
+                        str(post.get("sender_id", "")),
+                        str(post.get("views", 0)),
+                        str(post.get("forwards", 0)),
+                        str(post.get("reactions", 0)),
+                        str(post.get("traction_score", 0)),
+                        excerpt,
+                        link_cell,
+                    ])
+                lines.append(markdown_table(["ID", "Sender", "Views", "Forwards", "Reactions", "Traction", "Excerpt", "Telegram"], table_rows))
+            else:
+                lines.append("_No top posts available for this channel._")
+            lines.append("")
     else:
-        lines.append("_No top posts available._")
+        lines.append("_No source breakdown available._")
     lines.append("")
 
+    # --- DETAILNÍ ROZBOH KANÁLŮ VČETNĚ POPISU Z LLM ---
     lines.append("## Source breakdown")
     lines.append("")
+    channel_summaries = llm_result.get("channel_summaries", {}) if isinstance(llm_result, dict) else {}
+
     for source in summary.get("source_summaries", []):
         source_name = source.get("source_name", "unknown")
         channel_url = telegram_channel_url(source_name)
@@ -561,17 +722,15 @@ def build_markdown_report(input_path: Path, summary: dict[str, Any], llm_result:
             lines.append(f"### [{source_name}]({channel_url})")
         else:
             lines.append(f"### {source_name}")
+
+        # Vložení popisu kanálu z vygenerovaného JSONu
+        channel_desc = channel_summaries.get(source_name)
+        if channel_desc:
+            lines.append(f"**Popis kanálu:** {channel_desc}")
+            lines.append("")
+
         lines.append(f"- Messages: {source.get('message_count', 0)}")
         lines.append(f"- Unique senders: {source.get('unique_senders', 0)}")
-        if source.get("top_posts"):
-            lines.append("- Top posts:")
-            for post in source.get("top_posts", [])[:3]:
-                excerpt = textwrap.shorten(str(post.get("text") or "[no text]"), width=140, placeholder="...")
-                post_url = telegram_post_url(source_name, post.get("id"))
-                if post_url:
-                    lines.append(f"  - [{excerpt}]({post_url}) (traction {post.get('traction_score', 0)})")
-                else:
-                    lines.append(f"  - {excerpt} (traction {post.get('traction_score', 0)})")
         if source.get("repeated_messages"):
             lines.append("- Repeated messages:")
             for item in source.get("repeated_messages", [])[:2]:
@@ -679,8 +838,16 @@ def main() -> int:
     output_path = Path(args.output).expanduser().resolve() if args.output else default_report_output_path(input_path)
     if output_path.suffix.lower() != ".md":
         output_path = output_path.with_suffix(".md")
+        
     write_text_file(output_path, report)
-    print(f"[+] Report written to {output_path}")
+    print(f"[+] Full report written to {output_path}")
+
+    # 2. Generování a zápis samostatného stručného LLM reportu
+    llm_report = build_llm_only_report(input_path, llm_result, llm_provider="ollama", model_name=args.model)
+    llm_output_path = output_path.with_name(f"{output_path.stem}_llm_summary.md")
+    
+    write_text_file(llm_output_path, llm_report)
+    print(f"[+] LLM summary report written to {llm_output_path}")
 
     if payload_output_path is not None:
         print(f"[+] LLM payload written to {payload_output_path}")

@@ -81,7 +81,8 @@ async def download_messages(client, target, today=False, limit=None, specific_da
                 "text": message.text or "",
                 "reply_to_msg_id": message.reply_to_msg_id if message.reply_to else None,
                 "views": message.views,
-                "forwards": message.forwards
+                "forwards": message.forwards,
+                "reactions": message.reactions.to_dict() if message.reactions else None,
             })
 
         output_file = f"messages_export/messages_{safe_filename(channel_name)}.json"
