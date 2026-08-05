@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from datetime import datetime, timedelta
 
 # Načtení proměnných ze souboru .env
 load_dotenv()
@@ -51,6 +52,48 @@ def safe_filename(value):
     cleaned = ''.join(safe_chars).strip('._')
     return cleaned or 'messages'
 
+async def download_messages(client, target, today=False, limit=None, specific_date=None):
+    messages_data = []
+
+    try:
+        entity = await client.get_entity(target)
+        channel_name = getattr(entity, 'username', None) or getattr(entity, 'title', None) or target
+
+        # Určení cílového data před začátkem cyklu
+        target_date = datetime.now().date() if today else specific_date
+
+        async for message in client.iter_messages(target, limit=limit):
+            if not message.date:
+                continue
+
+            msg_date = message.date.date()
+
+            if target_date:
+                if msg_date > target_date:
+                    continue  # Zpráva je novější než požadované datum -> přeskočit
+                if msg_date < target_date:
+                    break     # Zpráva je starší -> jsme za cílovým dnem, ukončit cyklus
+
+            messages_data.append({
+                "id": message.id,
+                "date": str(message.date),
+                "sender_id": message.sender_id,
+                "text": message.text or "",
+                "reply_to_msg_id": message.reply_to_msg_id if message.reply_to else None,
+                "views": message.views,
+                "forwards": message.forwards
+            })
+
+        output_file = f"messages_export/messages_{safe_filename(channel_name)}.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(messages_data, f, ensure_ascii=False, indent=4)
+
+        return messages_data, channel_name, output_file
+
+    except Exception as e:
+        print(f"[-] Chyba při stahování pro cíl {target}: {e}")
+        return [], None, None
+
 async def main():
     parser = argparse.ArgumentParser(description="Download recent Telegram messages to JSON.")
     parser.add_argument(
@@ -71,6 +114,19 @@ async def main():
         "--groups-file",
         help="Path to a text file with one group ID, channel ID, or username per line",
     )
+    parser.add_argument(
+        "-t",
+        "--today",
+        action="store_true",
+        default=False,
+        help="If set, only download messages from today"
+    )
+    parser.add_argument(
+        "-d",
+        "--date",
+        type=str,
+        help="Download messages from a specific date (format: YYYY-MM-DD)"
+    )
     args = parser.parse_args()
 
     if args.groups_file:
@@ -90,33 +146,40 @@ async def main():
         targets = [target]
 
     async with TelegramClient('osint_session', API_ID, API_HASH) as client:
-        for target in targets:
-            print(f"[+] Připojuji se a stahuji posledních {args.limit} zpráv pro cíl: {target}...")
+        if args.today:
+            download_log_message = f"[+] Připojuji se a stahuji zprávy z dnešního dne pro cíle: {', '.join(str(t) for t in targets)}..."
 
-            messages_data = []
+            for target in targets:
+                print(download_log_message)
+                messages_data, channel_name, output_file = await download_messages(client, target, today=True)
+                after_download_log_message = f"[+] Hotovo! Staženo {len(messages_data)} zpráv z '{channel_name}' do souboru '{output_file}'."
+                print(after_download_log_message)
+
+        elif args.date:
+            
+            download_log_message = f"[+] Připojuji se a stahuji zprávy z {args.date} pro cíle: {', '.join(str(t) for t in targets)}..."
+
             try:
-                entity = await client.get_entity(target)
-                channel_name = getattr(entity, 'username', None) or getattr(entity, 'title', None) or target
+                specific_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+            except ValueError:
+                print("[-] Chyba: Datum musí být ve formátu YYYY-MM-DD.")
+                sys.exit(1)
 
-                async for message in client.iter_messages(target, limit=args.limit):
-                    messages_data.append({
-                        "id": message.id,
-                        "date": str(message.date),
-                        "sender_id": message.sender_id,
-                        "text": message.text or "",
-                        "reply_to_msg_id": message.reply_to_msg_id if message.reply_to else None,
-                        "views": message.views,
-                        "forwards": message.forwards
-                    })
+            for target in targets:
+                print(download_log_message)
+                messages_data, channel_name, output_file = await download_messages(client, target, specific_date=specific_date)
+                after_download_log_message = f"[+] Hotovo! Staženo {len(messages_data)} zpráv z '{channel_name}' do souboru '{output_file}'."
+                print(after_download_log_message)
 
-                output_file = f"messages_export/messages_{safe_filename(channel_name)}.json"
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(messages_data, f, ensure_ascii=False, indent=4)
+        else:
+            download_log_message = f"[+] Připojuji se a stahuji posledních {args.limit} zpráv pro cíle: {', '.join(str(t) for t in targets)}..."
 
-                print(f"[+] Hotovo! Staženo {len(messages_data)} zpráv z '{channel_name}' do souboru '{output_file}'.")
+            for target in targets:
+                print(download_log_message)
+                messages_data, channel_name, output_file = await download_messages(client, target, limit=args.limit)
+                after_download_log_message = f"[+] Hotovo! Staženo {len(messages_data)} zpráv z '{channel_name}' do souboru '{output_file}'."
+                print(after_download_log_message)
 
-            except Exception as e:
-                print(f"[-] Chyba při stahování pro cíl {target}: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
