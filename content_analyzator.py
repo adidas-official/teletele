@@ -336,11 +336,10 @@ def build_llm_payload(records: list[MessageRecord], summary: dict[str, Any], sam
             "Identify repeated stories, shared links, or identical posts that appear across multiple sources.",
             "Describe which channels appear to amplify the same narratives, sources, or links.",
             "Point out any clusters of channels/groups that cover the same story from similar angles.",
-            "Describe communication patterns for active members only in a non-clinical, non-diagnostic way.",
-            "Do not infer mental health, personality disorders, emotions, or hidden motives.",
+            "Describe communication patterns for active members.",
             "Return only valid JSON with keys: topics, summary, traction_insights, active_member_patterns, repeated_content_observations, caveats.",
             "Disregard Good morning, Hello, Hi, and similar greetings in the analysis.",
-            "Ignore greatings, sign-offs, and non-substantive messages when identifying repeated content.",
+            "Ignore greetings, sign-offs, and non-substantive messages when identifying repeated content.",
             "Be descriptive with the topics in deeper llm analysis.",
         ],
     }
