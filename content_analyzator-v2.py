@@ -107,7 +107,7 @@ def as_int(value: Any) -> int:
 
 def extract_text(message: dict[str, Any]) -> str:
     text = message.get("text")
-    logging.debug("Extracting text from message ID %s: %s", message.get("id"), text)
+    # logging.debug("Extracting text from message ID %s: %s", message.get("id"), text)
     if isinstance(text, str):
         return text
     if isinstance(text, list):
@@ -152,9 +152,9 @@ def fingerprint_text(text: str) -> str:
 
 
 def reaction_count(message: dict[str, Any]) -> int:
-    logging.debug("Message data for reaction count: %s", message)
+    # logging.debug("Message data for reaction count: %s", message)
     reactions = message.get("reactions")
-    logging.debug(f"Calculating reaction count for message ID {message.get('id')}: {reactions}")
+    # logging.debug(f"Calculating reaction count for message ID {message.get('id')}: {reactions}")
     if isinstance(reactions, dict):
         if "results" in reactions and isinstance(reactions["results"], list):
             return sum(as_int(result.get("count")) for result in reactions["results"] if isinstance(result, dict))
@@ -714,6 +714,7 @@ def build_markdown_report(input_path: Path, summary: dict[str, Any], llm_result:
     lines.append("## Source breakdown")
     lines.append("")
     channel_summaries = llm_result.get("channel_summaries", {}) if isinstance(llm_result, dict) else {}
+    logging.debug("Channel summaries from LLM: %s", channel_summaries)
 
     for source in summary.get("source_summaries", []):
         source_name = source.get("source_name", "unknown")
@@ -804,7 +805,7 @@ def main() -> int:
     for input_file in input_files:
         try:
             messages = load_messages(input_file)
-            logging.debug(f"Messages: {messages}")
+            # logging.debug(f"Messages: {messages}")
         except Exception as exc:
             print(f"[-] Failed to load messages from {input_file}: {exc}", file=sys.stderr)
             return 1
@@ -843,7 +844,7 @@ def main() -> int:
     print(f"[+] Full report written to {output_path}")
 
     # 2. Generování a zápis samostatného stručného LLM reportu
-    llm_report = build_llm_only_report(input_path, llm_result, llm_provider="ollama", model_name=args.model)
+    llm_report = build_llm_only_report(input_path, llm_result, model_name=args.model)
     llm_output_path = output_path.with_name(f"{output_path.stem}_llm_summary.md")
     
     write_text_file(llm_output_path, llm_report)
